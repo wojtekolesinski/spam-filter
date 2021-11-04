@@ -1,38 +1,59 @@
 import pandas as pd
 import spacy
-import re
 from spacy.lang.en.stop_words import STOP_WORDS
-from spacy.lang.en.punctuation import TOKENIZER_INFIXES
-from spacy.glossary import GLOSSARY
-
-nlp = spacy.load("en_core_web_sm")
-data = pd.read_csv('spam.csv', encoding='iso-8859-1')
-
-# Will be using just the first two columns
-data = data.iloc[:, :2]
-data.columns = ['Target', 'SMS']
-
-# data['SMS'] = data['SMS'].str.lower()
-i = 0
-print(data.size)
-print(data.head())
-for index, row in data.iterrows():
-    row['SMS'] = row['SMS'].lower()
-    lemmas = (token.lemma_ for token in nlp(row['SMS'])) # lemmatization
-    no_punctuation = (word for word in lemmas if word not in TOKENIZER_INFIXES)
-    no_pos_tags = (word for word in no_punctuation if word not in GLOSSARY.keys())
-    aanumbers = []
-    for word in no_pos_tags:
-        if re.match('.*\\d.*', word) is not None:
-            aanumbers.append(word)
-        else:
-            aanumbers.append('aanumbers')
-    no_single_letters = (word for word in aanumbers if word.len() != 1)
-    row['SMS'] = ' '.join(no_single_letters)
-
-    i += 1
-    if i == 205:
-        break
+from string import punctuation
 
 
-print(data.head())
+def bag_of_words(data):
+    vocab = set()
+    for row in data['SMS']:
+        vocab.update(row.split())
+    col_index = list(vocab)
+    col_index.sort()
+
+    bag = pd.DataFrame(0, index=range(len(data)), columns=col_index)
+    for i, row in data['SMS'].iteritems():
+        for word in row.split():
+            if word in vocab:
+                bag.loc[i, word] = 1
+
+    return pd.concat([data, bag], axis=1)
+
+
+def main():
+    # loading data
+    df = pd.read_csv("spam.csv", encoding='iso-8859-1', header=0, usecols=[0, 1], dtype=str)
+    df.columns = ['Target', 'SMS']
+    en_sm_model = spacy.load("en_core_web_sm")
+
+    # preprocessing
+    for i, row in df.iterrows():
+        text = row['SMS'].lower()
+        doc = en_sm_model(text)
+        new_text = []
+        for token in doc:
+            if any(ch.isdigit() for ch in token.text):
+                new_text.append("aanumbers")
+            elif len(token.lemma_) > 1 and token.lemma_ not in STOP_WORDS \
+                    and not any(ch in punctuation for ch in token.text):
+                new_text.append(token.lemma_)
+
+        df['SMS'][i] = " ".join(new_text)
+
+    # preparation for training
+    df = df.sample(n=df.shape[0], random_state=43)
+    train_last_index = int(df.shape[0] * 0.8)
+    train_set = df.iloc[0:train_last_index]
+    train_set.reset_index(drop=True, inplace=True)
+
+    # training
+    train_bag_of_words = bag_of_words(train_set)
+
+    # print
+    pd.options.display.max_columns = train_bag_of_words.shape[1]
+    pd.options.display.max_rows = train_bag_of_words.shape[0]
+    print(train_bag_of_words.iloc[:200, :50])
+
+
+if __name__ == "__main__":
+    main()
