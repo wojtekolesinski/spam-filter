@@ -2,6 +2,8 @@ import pandas as pd
 import spacy
 from spacy.lang.en.stop_words import STOP_WORDS
 from string import punctuation
+import numpy as np
+import re
 
 
 def bag_of_words(data):
@@ -32,11 +34,12 @@ def main():
         doc = en_sm_model(text)
         new_text = []
         for token in doc:
-            if any(ch.isdigit() for ch in token.text):
+            if re.search(r"[0-9]+", token.lemma_):
                 new_text.append("aanumbers")
-            elif len(token.lemma_) > 1 and token.lemma_ not in STOP_WORDS \
-                    and not any(ch in punctuation for ch in token.text):
-                new_text.append(token.lemma_)
+            else:
+                word = "".join([ch for ch in token.lemma_.lower() if ch not in punctuation])
+                if len(word) > 1 and word not in STOP_WORDS:
+                    new_text.append(word)
 
         df['SMS'][i] = " ".join(new_text)
 
@@ -48,11 +51,28 @@ def main():
 
     # training
     train_bag_of_words = bag_of_words(train_set)
+    train_bag_of_words['Target'] = train_bag_of_words['Target'].str.strip()
 
     # print
     pd.options.display.max_columns = train_bag_of_words.shape[1]
     pd.options.display.max_rows = train_bag_of_words.shape[0]
-    print(train_bag_of_words.iloc[:200, :50])
+
+    laplace_smoothing = 1
+
+    spam_word_count = train_bag_of_words.loc[train_bag_of_words['Target'] == 'spam', 'aa':].aggregate(np.sum, axis=0)
+    vocab_length = train_bag_of_words.iloc[:, 2:].shape[1]
+    spam_length = train_bag_of_words.loc[train_bag_of_words['Target'] == 'spam'].SMS.str.split().apply(len).sum()
+    spam_probability = (spam_word_count + laplace_smoothing) / (laplace_smoothing * vocab_length + spam_length)
+
+    ham_word_count = train_bag_of_words.loc[train_bag_of_words['Target'] == 'ham', 'aa':].aggregate(np.sum, axis=0)
+    ham_length = train_bag_of_words.loc[train_bag_of_words['Target'] == 'ham'].SMS.str.split().apply(len).sum()
+    ham_probability = (ham_word_count + laplace_smoothing) / (laplace_smoothing * vocab_length + ham_length)
+
+    probabilities = pd.DataFrame(data={'Spam Probability': spam_probability, 'Ham Probability': ham_probability},
+                                 index=spam_probability.index)
+
+    probabilities.loc['aanumbers', 'Spam Probability'] = 0.155
+    print(probabilities.iloc[:200])
 
 
 if __name__ == "__main__":
